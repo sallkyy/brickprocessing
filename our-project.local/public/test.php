@@ -2,28 +2,69 @@
 require 'config.php';
 session_start();
 
-$testId = $_GET['test_id'];
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
 
-if (isset($_GET['reset'])) {
+
+$testId = (int)$_GET['test_id'];
+//$userId = (int)$_SESSION['user_id'];
+$userId = 1;
+
+if (isset($_GET['reset']) && $_GET['reset'] === '1') {
+    // Полный сброс с подтверждением
+    session_regenerate_id(true); // Важно для безопасности
+    
+    // Полностью очищаем данные теста
+    unset($_SESSION['test_data']);
+    
+    // Сбрасываем результат в БД
+    $resetQuery = "DELETE FROM user_test WHERE user_id = ? AND test_id = ?";
+    $stmt = $conn->prepare($resetQuery);
+    $stmt->bind_param("ii", $userId, $testId);
+    $stmt->execute();
+    
+    // Инициализируем заново
     $_SESSION['test_data'] = [
-        'test_id' => (int)$_GET['test_id'],
+        'test_id' => $testId,
         'current_question' => 0,
         'answers' => [],
         'total_score' => 0,
-        'user_id' => 1
+        'user_id' => $userId,
+        'show_result' => false
     ];
-    header("Location: test.php?test_id=".(int)$_GET['test_id']);
+    
+    // Редирект без параметра reset
+    header("Location: test.php?test_id=$testId");
     exit;
 }
 
-if (!isset($_SESSION['test_data'])) {
+$checkResultsFromDB = "SELECT score FROM user_test WHERE user_id = ? AND test_id = ?";
+$stmt = $conn->prepare($checkResultsFromDB);
+$stmt->bind_param("ii", $userId, $testId);
+$stmt->execute();
+$existingResult = $stmt->get_result()->fetch_assoc();
+
+if($existingResult && !isset($_GET['reset'])){
     $_SESSION['test_data'] = [
-        'test_id' => (int)$_GET['test_id'],
+        'test_id' => $testId,
+        'current_question' => 0,
+        'answers' => [],
+        'total_score' => $existingResult['score'],
+        'user_id' => $userId,
+        'show_result' => true // Флаг, что нужно показать результат
+    ];
+    header("Location: results.php");
+    exit;
+}
+
+if (!isset($_SESSION['test_data']) || $_SESSION['test_data']['test_id'] != $testId) {
+    $_SESSION['test_data'] = [
+        'test_id' => $testId,
         'current_question' => 0,
         'answers' => [],
         'total_score' => 0,
-        'test_id' => $testId,
-        'user_id' => 1
+        'user_id' => $userId,
+        'show_result' => false
     ];
 }
 
@@ -69,6 +110,7 @@ if ($_SESSION['test_data']['current_question'] >= count($allQuestions)) {
     }
     
     
+    $_SESSION['test_data']['show_result'] = true;
     header("Location: results.php");
     exit;
 }
@@ -86,11 +128,6 @@ $currentQuestion = $allQuestions[$currentQuestionIndex];
 <html>
 <head>
     <title>Тест - вопрос <?= $currentQuestionIndex + 1 ?></title>
-    <style>
-        .hide{
-            display:none;
-        }
-    </style>
 </head>
 <body>
     <h1>Тестирование</h1>
@@ -104,7 +141,7 @@ $currentQuestion = $allQuestions[$currentQuestionIndex];
         <h3><?= htmlspecialchars($currentQuestion['description']) ?></h3>
         
         <form method="POST">
-            <input type="hidden" name="question_id" value="<?= $currentQuestion['id'] ?>">
+            <input type="hidden" name="question_id" value="<?= $currentQuestion['question_id'] ?>">
             
                 <div class="rating-scale">
                     <?php for ($i = 1; $i <= 10; $i++): ?>
